@@ -19,19 +19,39 @@ sealed class Terminal {
     }
 
     static void Help() {
-        System.Console.WriteLine("Controls: arrows or numpad 1-9 move (5 waits), `.` rest, `g` get, `s` search, `<` ascend, `>` descend.");
+        System.Console.WriteLine("Controls: arrows or numpad 1-9 move (5 waits; press Enter after each arrow), `.` rest, `g` get, `s` search, `<` ascend, `>` descend.");
         System.Console.WriteLine("Inventory: `i` lists items; then say `equip ID`, `use ID`, `fire ID` or `drop ID`.");
         System.Console.WriteLine("Game: `S` save, `L` load, `?` help, `q` quit. Every accepted action costs one turn.");
+    }
+
+    // The Strata compiler folds a "\u001b" string literal into an empty string when it is
+    // passed as an argument, so escape detection has to scan characters against '\u001b'.
+    static bool HasEscape(string s) {
+        for (var i = 0; i < s.Length; i++) if (s[i] == '\u001b') return true;
+        return false;
+    }
+
+    // Terminals send arrow keys as ESC-[-letter (normal mode) or ESC-O-letter (application
+    // mode, e.g. inside screen/tmux), with optional modifier parameters such as ESC-[1;3C.
+    static string Arrow(string line) {
+        var esc = -1;
+        for (var i = 0; i < line.Length; i++) if (line[i] == '\u001b') esc = i;
+        if (esc < 0) return "";
+        var tail = line.Substring(esc + 1);
+        while (tail.Length > 0 && (tail[0] == '\u001b' || tail.StartsWith("[") || tail.StartsWith("O"))) tail = tail.Substring(1);
+        var k = 0;
+        while (k < tail.Length && "0123456789;".IndexOf(tail.Substring(k, 1)) >= 0) k++;
+        if (k >= tail.Length) return "";
+        return tail.Substring(k, 1).ToLowerInvariant() switch {
+            "a" => "up", "b" => "down", "c" => "right", "d" => "left", _ => ""
+        };
     }
 
     static string Move(string line) => line switch {
         "1" => "sw", "2" => "down", "3" => "se", "4" => "left", "5" => "rest", "6" => "right",
         "7" => "nw", "8" => "up", "9" => "ne", "." => "rest", "g" => "get", "s" => "search",
         "<" => "ascend", ">" => "descend",
-        _ => line.StartsWith("\u001b[A") ? "up"
-          : line.StartsWith("\u001b[B") ? "down"
-          : line.StartsWith("\u001b[C") ? "right"
-          : line.StartsWith("\u001b[D") ? "left"
+        _ => Arrow(line) != "" ? Arrow(line)
           : line switch { "up" => "up", "down" => "down", "left" => "left", "right" => "right", "nw" => "nw", "ne" => "ne", "sw" => "sw", "se" => "se", _ => "" }
     };
 
@@ -63,7 +83,7 @@ sealed class Terminal {
         return new Game((uint)seed, heroClass);
     }
 
-    static Game LoadGame() {
+    static Game? LoadGame() {
         var path = SaveFile();
         if (!System.IO.File.Exists(path)) {
             System.Console.WriteLine($"No saved game at {path}.");
@@ -133,6 +153,10 @@ sealed class Terminal {
             if (System.String.IsNullOrEmpty(command)) {
                 var action = head.ToLowerInvariant();
                 if (action != "equip" && action != "use" && action != "fire" && action != "drop") {
+                    if (HasEscape(head)) {
+                        System.Console.WriteLine("Arrow sequence not understood. Press Enter after each arrow, or use numpad 1-9.");
+                        continue;
+                    }
                     System.Console.WriteLine($"Unrecognized: {head}. Type ? for controls.");
                     continue;
                 }

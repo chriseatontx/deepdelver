@@ -36,3 +36,19 @@ playability claim. The engine's own dialect (`sealed` classes, `uint`/`ushort`
 state, `class*`/`struct*` aliases) is deliberately not restyled: `sealed` is
 legal on classes only, so methods that take or return `Floor`, `Monster` or
 `Item` need explicit return types and the harness mirrors those types verbatim.
+
+## Input encoding
+
+Arrow keys are an adapter concern only: the engine still receives symbolic
+commands. Terminals send arrows as `ESC [ A-D` in normal mode, `ESC O A-D` in
+application mode, and `ESC [ 1 ; 3 A` with modifier parameters, so
+`Terminal.Arrow` accepts all of them (plus the Alt-prefixed `ESC ESC [` form),
+skipping introducers and numeric/`;` parameters and mapping the trailing letter
+case-insensitively. Escape detection must scan characters against the `'\u001b'`
+char literal: in this compiler a lone `"\u001b"` string literal collapses to the
+empty string when passed as an argument, so `IndexOf`/`LastIndexOf`/`Contains`
+calls using it silently misbehave (`LastIndexOf` returns the string length), and
+`Substring(lastIndexOf(...) + 1)` then throws. The char literal compares
+correctly against raw stdin, where an arrow arrives as bytes 27, 91, 67.
+These adapter behaviours are exercised by scripted stdin probes rather than by
+`tests/TestRunner.cs`, which only compiles the engine.

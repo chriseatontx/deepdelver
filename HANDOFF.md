@@ -16,8 +16,9 @@ harness that actually exercises the engine. The remaining checklist item
   whole simulation and was not modified during this session.
 - Built `DeepDelver/Program.cs`: thin console renderer and input adapter over
   the existing engine API (`Game.Glyph(x, y)`, `Game.Act(command)`, `Game.Save`/
-  `Game.Load`, `Program.Dev` fixture, app-data save/score resolution,
-  arrow-key and numpad handling).
+  `Game.Load`, `Program.Dev` fixture, app-data save/score resolution). Arrow keys
+  were reworked in this session (see "Arrow-key input") so the adapter now
+  accepts every terminal arrow encoding, not just one of them.
 - Completed the test harness `tests/TestRunner.cs` (it was missing every test
   body). It compiles the real engine source, not a copy, and reports
   `Checks: 332   Failures: 0` with exit code 0.
@@ -30,7 +31,11 @@ harness that actually exercises the engine. The remaining checklist item
 - `tests/Game.cs` is a symlink to `../DeepDelver/Game.cs`, which is how the
   engine reaches the test assembly. There is no separate Engine.cs and there is
   no `DeepDelver/Engine.csproj`.
-- Both projects build with `0 Warning(s)` / `0 Error(s)`; the runner exits 0.
+- `dotnet build tests/TestRunner.csproj` reports `0 Warning(s)` / `0 Error(s)`;
+  `dotnet build DeepDelver` reports `0 Error(s)` with 4 pre-existing nullable
+  warnings (CS8602/CS8604) on the two `env[...].ToString()` lookups in
+  `Terminal.AppDir`, which exist in the committed file as it stands. The runner
+  exits 0.
 - Stair rules are asserted as fixtures (the hero is repositioned onto a stair
   through the public state accessors) instead of a survival walk, because a
   BFS walk dies before depth 3 on every seed. The temporary probe that proved
@@ -42,7 +47,8 @@ harness that actually exercises the engine. The remaining checklist item
 Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
 8.0.426, and there is no system `dotnet` on this machine):
 
-- `dotnet build DeepDelver` -> Build succeeded, 0 warning(s), 0 error(s).
+- `dotnet build DeepDelver` -> Build succeeded, 0 error(s) (4 pre-existing
+  nullable warnings on `AppDir`'s environment lookups).
 - `dotnet build tests/TestRunner.csproj` -> Build succeeded, 0 warning(s),
   0 error(s).
 - `dotnet run --project tests/TestRunner.csproj` -> `Checks: 332 Failures: 0`,
@@ -62,6 +68,51 @@ blocked-hit accounting, rest and hunger, pickup and drop and quiver
 bookkeeping, melee/spell/fire/kill accounting, search and equipment, descent
 and ascent rules including the guardian chamber and the Star win condition,
 save round-trip and corrupt-save rejection, and the identical-script rule.
+
+## Arrow-key input (why the arrows did not move the hero)
+
+Asked: "arrow keys don't move the hero - was that ever tested?" No. Every earlier
+input test piped single characters (`w`, `4242`, `.`, `g`, `S`, `L`, `?`), so an
+arrow sequence never reached the parser; when one was piped it only ever printed
+`Unrecognized`. Nothing in `tests/TestRunner.cs` covers the adapter either, so
+arrow handling had no test coverage at all.
+
+What the committed code did (commit `edfb388`, `Move` in `Program.cs`): a chain of
+`line.StartsWith("\u001b[A")`-style tests, i.e. only the normal-mode CSI form
+`ESC [ A-D`. Real terminals in application mode (screen, tmux, many GUI terminals
+and Windows consoles) send `ESC O A-D`, and shift/alt-modified arrows send
+`ESC [ 1 ; 3 A`, so those fell through to `Unrecognized`. That is why the README's
+"arrows or numpad 1-9 move" contract was only half true.
+
+The reworked adapter (`Terminal.Arrow` plus `Terminal.HasEscape` in `Program.cs`)
+scans for `'\u001b'` by character, strips the introducer (`[`, `O` or a repeated
+`ESC` for Alt-prefixed arrows), skips modifier parameters (`0-9`, `;`) and maps the
+final letter (`a`/`b`/`c`/`d`, case-insensitive) to up/down/right/left. Unparseable
+arrow bytes now say "Arrow sequence not understood. Press Enter after each arrow,
+or use numpad 1-9." instead of the generic `Unrecognized` line, and the `?` help
+text says the same. `Game.cs` is untouched: arrows are translated in the adapter
+before the engine sees a symbolic command.
+
+Compiler trap found while fixing this: a lone `"\u001b"` **string literal used as
+an argument** behaves as an empty string (`"abc".IndexOf("\u001b")` returns 0, not
+-1, and `LastIndexOf` returns the length), so `line.LastIndexOf("\u001b")` returned
+`line.Length` and `Substring(esc + 1)` threw `ArgumentOutOfRangeException` (exit
+134, "Unhandled exception"). The standalone literal is fine (`"\u001b".Length` is
+1) and longer literals in the same call work (`StartsWith("\u001b[")` is correct),
+so the workaround is character scanning against the `'\u001b'` **char literal**,
+which compares correctly against raw stdin bytes 27.
+
+Verified after the fix (scripted stdin into
+`dotnet run --project DeepDelver/DeepDelver.csproj`, seed 4242, Warden; probes
+live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
+
+- `ESC [ A/B/C/D`, `ESC O A/B/C/D`, `ESC [ 1 ; 3 A/B/C/D` and Alt-prefixed
+  `ESC ESC [ A/B/C/D` are all accepted; each advances the turn counter.
+- Twelve attempts in each direction land the hero on the same tile and spend the
+  same number of turns as the matching numpad key: up 2 tiles, down 2 tiles,
+  left 7 tiles, right 3 tiles, identical for numpad/CSI/SS3/modifier forms.
+- Bare letters `A B C D` stay `Unrecognized: C. Type ? for controls.` and spend
+  no turn, and a lone `ESC` prints the arrow hint without crashing (exit 0).
 
 ## Known limitations
 
@@ -109,3 +160,8 @@ save round-trip and corrupt-save rejection, and the identical-script rule.
    through turn, hunger, save and score accounting.
 4. Optional: make `docs/architecture.md` the authority for the two dangling
    comment references above, or restore those note files.
+5. The arrow-key verification lives in throwaway stdin probes under
+   `/tmp/opencode` (`inputprobe.py`, `dirprobe.py`), so it is not re-runnable
+   from a clone. Promote an equivalent check into the repository (a small stdin
+   fixture runner, or a dedicated adapter assembly that includes `Program.cs`
+   the way `tests/Game.cs` includes `Game.cs`) if CI must cover input encoding.
