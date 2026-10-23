@@ -1,0 +1,11 @@
+# Build outputs
+DeepDelver/bin/
+DeepDelver/obj/
+tests/bin/
+tests/obj/
+
+# Vendored dotnet SDK launcher: repo-local offline tooling (578 MB), not part of the port
+.tools/
+
+# Runtime state lives in the user application-data directory, never here
+/save.json
