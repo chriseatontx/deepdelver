@@ -5,9 +5,12 @@ Working directory: /home/chris/code/testhack
 
 ## Current objective
 
-Finish the in-progress port: a clean build, a working terminal UI, and a test
-harness that actually exercises the engine. The remaining checklist item
-("Build and run .NET test suite") is now complete and verified.
+Finish the in-progress port (clean build, working terminal UI, engine harness)
+and explain and fix why arrow keys never moved the hero in the real interactive
+run (`dotnet run --project DeepDelver`). All of it is done and verified: the
+engine harness reports `Checks: 332   Failures: 0`, and a new real-pseudo-
+terminal input gate `tests/input-check.py` reports `input checks: 10   failures:
+0`.
 
 ## Completed tasks
 
@@ -17,8 +20,12 @@ harness that actually exercises the engine. The remaining checklist item
 - Built `DeepDelver/Program.cs`: thin console renderer and input adapter over
   the existing engine API (`Game.Glyph(x, y)`, `Game.Act(command)`, `Game.Save`/
   `Game.Load`, `Program.Dev` fixture, app-data save/score resolution). Arrow keys
-  were reworked in this session (see "Arrow-key input") so the adapter now
-  accepts every terminal arrow encoding, not just one of them.
+  were reworked twice in this session (see "Arrow-key input"): the parser now
+  accepts every terminal arrow encoding, and the adapter has two input paths so
+  a real terminal gets raw single-byte reads instead of editor-backed `Console
+  ReadLine`.
+- Added `tests/input-check.py`: a real-pseudo-terminal (pty) gate for the
+  adapter's input encoding, complementing the engine-only harness.
 - Completed the test harness `tests/TestRunner.cs` (it was missing every test
   body). It compiles the real engine source, not a copy, and reports
   `Checks: 332   Failures: 0` with exit code 0.
@@ -44,8 +51,10 @@ harness that actually exercises the engine. The remaining checklist item
 
 ## Verified
 
-Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
-8.0.426, and there is no system `dotnet` on this machine):
+Commands (run with the system `/usr/bin/dotnet`, SDK 8.0.426; the repo also
+keeps an untracked launcher at `.tools/dotnet/dotnet` over vendored SDK packs,
+and that one rejects some of these invocations, so the system tool is what was
+used here):
 
 - `dotnet build DeepDelver` -> Build succeeded, 0 error(s) (4 pre-existing
   nullable warnings on `AppDir`'s environment lookups).
@@ -58,12 +67,20 @@ Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
   deterministic map (seed 4242, Warden, depth 0, turn 6).
 - `dotnet run --project DeepDelver` (piped stdin) -> menu, `?` help, rest,
   pickup, `i`, `s`, `S`/`L` (`Saved.` then `Loaded.`), `q` exit 0.
+- `python3 tests/input-check.py` -> `input checks: 10   failures: 0`, exit 0
+  (seed 4242, Warden). The arrow plan up x2 / down x2 / left x7 / right x3 ends
+  at column 39 on turn 14 for numpad digits, for arrows with Enter, and for
+  arrows with **no** Enter at all; the `ESC O A`, `ESC [ 1 ; 3 A` and `ESC ESC [
+  A` forms each spend 2 of 4 presses with no complaint; `i` prints the
+  inventory block and `quit` exits; and `stty -g` captured immediately before
+  and after the run is byte-identical.
 - Saves go to `~/.local/DeepDelver/save.json`, outside the repository. The
   verification and clone runs each wrote a save there, so `save.json` currently
-  exists in that directory. `scores.txt` does not, because those runs quit with
-  `q`, which ends the session without recording a score; a run that ends in
-  death or victory appends to that file instead. Either way this state stays
-  outside the repository.
+  exists in that directory. `scores.txt` now exists there too: the pty gate runs
+  the `--dev` fixture, which ends in death and appends one line
+  (`Warden 0 16 dead`). Quitting with `q` still records no score, so ordinary
+  scripted runs leave the file untouched. Either way this state stays outside the
+  repository, and `git status` stays clean.
 - `git push` -> `origin/main` matches the local `HEAD`, and `tests/Game.cs` is
   stored as a symlink (mode `120000`) so the clone compiles the real engine
   source; a fresh clone of the pushed tree builds and passes the runner. Commits
@@ -95,10 +112,12 @@ The reworked adapter (`Terminal.Arrow` plus `Terminal.HasEscape` in `Program.cs`
 scans for `'\u001b'` by character, strips the introducer (`[`, `O` or a repeated
 `ESC` for Alt-prefixed arrows), skips modifier parameters (`0-9`, `;`) and maps the
 final letter (`a`/`b`/`c`/`d`, case-insensitive) to up/down/right/left. Unparseable
-arrow bytes now say "Arrow sequence not understood. Press Enter after each arrow,
-or use numpad 1-9." instead of the generic `Unrecognized` line, and the `?` help
-text says the same. `Game.cs` is untouched: arrows are translated in the adapter
-before the engine sees a symbolic command.
+arrow bytes now say "Arrow sequence not understood." instead of the generic
+`Unrecognized` line, and the `?` help text says the same. `Game.cs` is untouched:
+arrows are translated in the adapter before the engine sees a symbolic command.
+(After the second round of fixes, both texts dropped the "press Enter after each
+arrow" advice: arrows act without Enter, so the hint is now "Use numpad 1-9, or
+type up/down/left/right.")
 
 Compiler trap found while fixing this: a lone `"\u001b"` **string literal used as
 an argument** behaves as an empty string (`"abc".IndexOf("\u001b")` returns 0, not
@@ -109,9 +128,10 @@ an argument** behaves as an empty string (`"abc".IndexOf("\u001b")` returns 0, n
 so the workaround is character scanning against the `'\u001b'` **char literal**,
 which compares correctly against raw stdin bytes 27.
 
-Verified after the fix (scripted stdin into
-`dotnet run --project DeepDelver/DeepDelver.csproj`, seed 4242, Warden; probes
-live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
+Verified after the first round of fixes (scripted stdin into
+`dotnet run --project DeepDelver/DeepDelver.csproj`, seed 4242, Warden; those
+probes were throwaway `/tmp/opencode` scripts and are superseded by the repo-resident
+gate `tests/input-check.py`):
 
 - `ESC [ A/B/C/D`, `ESC O A/B/C/D`, `ESC [ 1 ; 3 A/B/C/D` and Alt-prefixed
   `ESC ESC [ A/B/C/D` are all accepted; each advances the turn counter.
@@ -120,6 +140,60 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
   left 7 tiles, right 3 tiles, identical for numpad/CSI/SS3/modifier forms.
 - Bare letters `A B C D` stay `Unrecognized: C. Type ? for controls.` and spend
   no turn, and a lone `ESC` prints the arrow hint without crashing (exit 0).
+
+### Why arrows still did not move the hero in the real interactive run
+
+That first round did not close the user's complaint, and scripted stdin could
+never show the reason: piping has no line editor. Replaying the same session
+through `os.forkpty` (child stdin is a genuine tty) exposed it:
+
+1. With stdin on a tty, `Console.ReadLine()` is editor-backed. Its first read
+   emits the readline advertisement `ESC [ ? 1 h =` (application keypad plus vi
+   mode), and `ESC [ A` is then swallowed by that line editor as a
+   history-navigation macro. `ReadLine` hands the game an **empty line**, so
+   `Move` returns `""`, `Game.Act("")` is rejected and spends no turn, and the
+   hero never moves. The escape sequence never reaches the parser at all.
+2. The only feedback that run produced (`Arrow sequence not understood.`) was
+   written immediately before the next redraw, whose leading `Console.Clear()`
+   erases the screen, so nothing persistent remained in the terminal. That is
+   why the user saw a map that simply ignored the arrow key.
+3. Piped stdin has no editor, so the same bytes reach `Arrow` intact - which is
+   precisely why every earlier scripted probe reported the arrows as accepted
+   while the interactive game still ignored them.
+
+The adapter now has two input paths, chosen by asking `[ -t 0 ]` whether stdin is
+a tty:
+
+- tty: `EnterRaw()` captures the current settings with `stty -g` into
+  `<app-data>/.tty-settings`, then re-applies them through `stty` with `-icanon
+  -echo min 1 time 0`, which makes the tty deliver one byte at a time with no
+  editor. Bytes are read from `/dev/tty` through
+  `System.IO.File.OpenRead("/dev/tty")` and `FileStream.ReadByte()`, with a
+  one-slot push-back for over-reads. An arrow escape acts as soon as its final
+  letter arrives; numpad digits and `.` act on a single keypress; letters and
+  every other first byte read an Enter-terminated line, so words such as
+  `equip 3` still work. Because echo is off, the adapter echoes that line itself
+  (with a `"\b \b"` correction for backspace).
+- not a tty: unchanged `Console.ReadLine()`, so scripted verification still works.
+
+`LeaveRaw()` writes the captured settings back through `stty` and is called from
+a `finally` around the whole run, so the terminal is handed back on every exit
+path, including an exception. `Game.cs` is untouched.
+
+Verified after the second round of fixes (the built executable
+`DeepDelver/bin/Debug/net8.0/DeepDelver` inside a real pty, seed 4242, Warden;
+also recorded by `tests/input-check.py`):
+
+- The hero reaches column 39 on turn 14 for numpad digits, for arrow bytes
+  followed by Enter, and for arrow bytes with **no Enter at all**; no complaint
+  string appears anywhere in the transcript.
+- `ESC O A` (application mode), `ESC [ 1 ; 3 A` (modified) and `ESC ESC [ A`
+  (Alt-prefixed) each spend 2 of their 4 presses - the other 2 are blocked by the
+  wall, and a blocked step spends no turn - with no complaint.
+- `i\r` prints the inventory block and `quit\r` exits 0, so Enter-terminated
+  words still work on a raw tty.
+- `stty -g` captured in the shell immediately before and immediately after the
+  run is byte-identical, i.e. the program gave the terminal settings back.
 
 ## Known limitations
 
@@ -155,6 +229,21 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
   `DeepDelver/Engine Notes.md` and `../docs/ui-map.md`. Neither file exists in
   this repository; `docs/architecture.md` is the only documentation that
   survives. `Game.cs` was left untouched, so these remain as-is.
+- The raw input path assumes POSIX tooling: `Sh` runs `sh -c` to test `[ -t 0 ]`,
+  and the raw mode itself needs `stty` and `/dev/tty`. It was verified only on
+  Linux. On a system without `sh` the `Sh` helper throws instead of falling back,
+  so Windows input handling is unverified; without a tty the adapter keeps the
+  line-oriented `Console.ReadLine()` path, where an arrow escape still needs
+  Enter before the parser sees it. The engine contract is unaffected either way.
+- `tests/input-check.py` needs python3 (for `os.forkpty`, the only thing here that
+  reproduces a real tty) plus a built executable at
+  `DeepDelver/bin/Debug/net8.0/DeepDelver`, so run `dotnet build DeepDelver`
+  first. The engine gate stays pure C#.
+- The pty gate runs the `--dev` fixture, which appends one line to the score
+  history in the real application-data directory (`~/.local/DeepDelver/scores.txt`
+  here). That directory is outside the repository, so `git status` stays clean,
+  but the scratch history is not reset by the gate. The `.tty-settings` file the
+  adapter writes into that directory is deleted by `LeaveRaw` on exit.
 
 ## Unfinished and suggested next steps
 
@@ -164,7 +253,8 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
    directly; until then the runner is the equivalent gate.
 2. Remote work is done: `origin` is
    `https://github.com/chriseatontx/deepdelver` and `main` is pushed and tracked
-   (`git push` is a no-op until more changes land). The push authenticated through
+   (`git push` pushed the work committed in this session; `--force-with-lease` was
+   only needed for the identity rewrite). The push authenticated through
    the `gh` CLI credential helper already installed for `github.com`. Because the
    author identity was changed to `opencode`, the whole branch was re-authored and
    replaced with `git push --force-with-lease`; trees, messages and dates are
@@ -177,8 +267,14 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
    through turn, hunger, save and score accounting.
 4. Optional: make `docs/architecture.md` the authority for the two dangling
    comment references above, or restore those note files.
-5. The arrow-key verification lives in throwaway stdin probes under
-   `/tmp/opencode` (`inputprobe.py`, `dirprobe.py`), so it is not re-runnable
-   from a clone. Promote an equivalent check into the repository (a small stdin
-   fixture runner, or a dedicated adapter assembly that includes `Program.cs`
-   the way `tests/Game.cs` includes `Game.cs`) if CI must cover input encoding.
+5. Done: input-encoding verification is repo-resident. `tests/input-check.py` is
+   a checked-in gate that drives the built game through a real pseudo-terminal
+   (`os.forkpty`) plus a piped-stdin equivalence pass and the `--dev` fixture; its
+   exit code is the number of failed checks. The throwaway `/tmp/opencode` probes
+   are outside the repository and were never committed; the checked-in gate
+   replaces them - run `dotnet build DeepDelver && python3 tests/input-check.py`
+   from a clone to re-verify arrow handling.
+6. If a POSIX-free CI is required, the raw path needs a Windows-specific single-key
+   reader instead of `sh`/`stty`/`/dev/tty`. That would touch only the input half
+   of the `Program.cs` adapter, and cannot be verified on this machine, so it was
+   not attempted.

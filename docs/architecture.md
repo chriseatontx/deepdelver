@@ -50,5 +50,26 @@ empty string when passed as an argument, so `IndexOf`/`LastIndexOf`/`Contains`
 calls using it silently misbehave (`LastIndexOf` returns the string length), and
 `Substring(lastIndexOf(...) + 1)` then throws. The char literal compares
 correctly against raw stdin, where an arrow arrives as bytes 27, 91, 67.
-These adapter behaviours are exercised by scripted stdin probes rather than by
-`tests/TestRunner.cs`, which only compiles the engine.
+
+A second, deeper cause of the complaint was found in the real interactive run:
+with stdin attached to a terminal, `Console.ReadLine()` is editor-backed (it
+emits the `ESC [ ? 1 h =` vi-mode advertisement) and eats `ESC [ A` as a
+history-navigation macro, so it returns an **empty line** and no move is ever
+attempted; piped stdin never shows this, which is why every earlier scripted
+probe passed. The adapter therefore keeps `ReadLine` for piped stdin but, when
+`[ -t 0 ]` says stdin is a tty, captures the terminal settings with `stty -g`,
+puts the tty in `stty -icanon -echo min 1 time 0`, and reads single bytes from
+`/dev/tty`; the saved settings are handed back through `stty` on every exit path
+via `try`/`finally`. Arrow escapes act as soon as the final letter arrives,
+numpad digits and `.` act on the same single keypress, and Enter-terminated
+words (`equip 3`, `i`, `q`) are still read whole because prompts must never
+consume a single keystroke.
+
+`tests/TestRunner.cs` compiles the engine only, so adapter behaviour is gated
+separately by `tests/input-check.py`, which drives the built game through a real
+pseudo-terminal (`os.forkpty`, so the child's stdin is a genuine tty) and also
+re-checks piped stdin equivalence and the `--dev` fixture; its exit code is the
+number of failed checks. Scripted stdin alone cannot reproduce the editor-backed
+failure, so the pty is what makes the contract verifiable from a clone. The raw
+path is POSIX-only (`sh -c` for the `[ -t 0 ]` probe, `stty`, `/dev/tty`) and was
+verified on Linux; with no tty the adapter remains line-oriented.

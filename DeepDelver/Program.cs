@@ -19,7 +19,7 @@ sealed class Terminal {
     }
 
     static void Help() {
-        System.Console.WriteLine("Controls: arrows or numpad 1-9 move (5 waits; press Enter after each arrow), `.` rest, `g` get, `s` search, `<` ascend, `>` descend.");
+        System.Console.WriteLine("Controls: arrows or numpad 1-9 move (5 waits; one keypress acts at once), `.` rest, `g` get, `s` search, `<` ascend, `>` descend.");
         System.Console.WriteLine("Inventory: `i` lists items; then say `equip ID`, `use ID`, `fire ID` or `drop ID`.");
         System.Console.WriteLine("Game: `S` save, `L` load, `?` help, `q` quit. Every accepted action costs one turn.");
     }
@@ -71,14 +71,14 @@ sealed class Terminal {
 
     static Game Fresh(string[] args) {
         System.Console.WriteLine("Choose your class: (W)arden, (A)rcanist, (R)anger");
-        var pick = Read();
+        var pick = Line();
         var heroClass = pick.Trim().ToLowerInvariant() switch {
             "w" => HeroClass.Warden, "warden" => HeroClass.Warden,
             "a" => HeroClass.Arcanist, "arcanist" => HeroClass.Arcanist,
             _ => HeroClass.Ranger
         };
         System.Console.WriteLine("Seed (blank for the default):");
-        var seedText = Read();
+        var seedText = Line();
         var seed = System.String.IsNullOrEmpty(seedText.Trim()) ? 1 : ItemId(seedText);
         return new Game((uint)seed, heroClass);
     }
@@ -101,6 +101,129 @@ sealed class Terminal {
     static string Read() {
         var line = System.Console.ReadLine();
         return line == null ? "" : line;
+    }
+
+    // With stdin attached to a real terminal, Console.ReadLine() is editor-backed: it
+    // advertises application mode (ESC [ ? 1 h =) and eats ESC-[ as a history macro, so
+    // it returns an empty line and arrows never reach the game (Turn stays 0). Piped stdin
+    // is fine, so keep ReadLine there; on a real tty, take the tty out of canonical (and
+    // echoing) mode with stty and read bytes straight from /dev/tty instead, then hand the
+    // original terminal settings back when the program exits.
+    static bool Raw = false;
+    static System.IO.FileStream? Tty = null;
+    static int Held = -1;
+    static string TtyCfg = "";
+
+    static int Sh(string script) {
+        var child = System.Diagnostics.Process.Start("sh", new[] { "-c", script });
+        child.WaitForExit();
+        return child.ExitCode;
+    }
+
+    static bool TtyIn() => Sh("[ -t 0 ]") == 0;
+
+    static void EnterRaw() {
+        Raw = TtyIn();
+        if (!Raw) return;
+        EnsureAppDir();
+        TtyCfg = System.IO.Path.Combine(AppDir(), ".tty-settings");
+        Sh("stty -g >'" + TtyCfg + "' 2>/dev/null; stty -icanon -echo min 1 time 0 2>/dev/null");
+        Tty = System.IO.File.OpenRead("/dev/tty");
+    }
+
+    static void LeaveRaw() {
+        if (Tty != null) { Tty.Close(); Tty = null; }
+        if (TtyCfg == "") return;
+        var saved = System.IO.File.Exists(TtyCfg) ? System.IO.File.ReadAllText(TtyCfg).Trim() : "";
+        if (saved != "") {
+            var child = System.Diagnostics.Process.Start("stty", new[] { saved });
+            child.WaitForExit();
+        }
+        Sh("rm -f '" + TtyCfg + "'");
+    }
+
+    const string AscLower = "abcdefghijklmnopqrstuvwxyz";
+    const string AscUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const string AscDigit = "0123456789";
+
+    static string Chr(int b) => b switch {
+        32 => " ", 33 => "!", 37 => "%", 40 => "(", 41 => ")", 42 => "*", 43 => "+", 44 => ",",
+        45 => "-", 46 => ".", 47 => "/", 58 => ":", 59 => ";", 60 => "<", 61 => "=", 62 => ">",
+        63 => "?", 91 => "[", 93 => "]", 95 => "_",
+        _ => b >= 48 && b <= 57 ? AscDigit.Substring(b - 48, 1)
+          : b >= 97 && b <= 122 ? AscLower.Substring(b - 97, 1)
+          : b >= 65 && b <= 90 ? AscUpper.Substring(b - 65, 1)
+          : ""
+    };
+
+    static bool EscParam(int n) => n == 27 || n == 91 || n == 79 || n == 59 || (n >= 48 && n <= 57);
+
+    static int Next() {
+        if (Held > -1) { var b = Held; Held = -1; return b; }
+        if (Tty == null) return -1;
+        return Tty.ReadByte();
+    }
+
+    static void Push(int b) { Held = b; }
+
+    // One raw arrow keypress arrives as ESC-[ / ESC-O / ESC ESC (params) then a letter.
+    static string ArrowKey() {
+        while (true) {
+            var n = Next();
+            if (n == 65 || n == 97) return "up";
+            if (n == 66 || n == 98) return "down";
+            if (n == 67 || n == 99) return "right";
+            if (n == 68 || n == 100) return "left";
+            if (n < 0 || !EscParam(n)) { if (n > -1) Push(n); return ""; }
+        }
+    }
+
+    // Enter-terminated word, echoed by hand because the tty no longer echoes.
+    static string Word(int b) {
+        var word = "";
+        var c = b;
+        while (c > -1 && c != 10 && c != 13 && c != 27) {
+            if (c == 8 || c == 127) {
+                if (word.Length > 0) {
+                    word = word.Substring(0, word.Length - 1);
+                    System.Console.Write("\b \b");
+                }
+            } else {
+                var piece = Chr(c);
+                word = word + piece;
+                System.Console.Write(piece);
+            }
+            c = Next();
+        }
+        return word;
+    }
+
+    // The game command: one keypress acts at once (arrows, numpad digits, `.`), while
+    // words such as `equip 3` still wait for Enter.
+    static string Cmd() {
+        if (!Raw) return Read();
+        var b = Next();
+        while (b == 10 || b == 13) b = Next();
+        if (b < 0) return "";
+        if (b == 27) {
+            var arrow = ArrowKey();
+            if (arrow != "") return arrow;
+            b = Next();
+            while (b == 10 || b == 13) b = Next();
+            if (b < 0) return "";
+        }
+        if (b >= 49 && b <= 57) return "" + (b - 48);
+        if (b == 46) return ".";
+        return Word(b);
+    }
+
+    // Prompts always want a whole line, never a single keystroke.
+    static string Line() {
+        if (!Raw) return Read();
+        var b = Next();
+        while (b == 10 || b == 13) b = Next();
+        if (b < 0) return "";
+        return Word(b);
     }
 
     static void Render(Game game) {
@@ -132,7 +255,7 @@ sealed class Terminal {
     static void Session(Game game) {
         while (true) {
             Render(game);
-            var line = Read().Trim();
+            var line = Cmd().Trim();
             if (System.String.IsNullOrEmpty(line)) continue;
             if (line == "q" || line == "quit") return;
             if (line == "?" || line == "help") { Help(); continue; }
@@ -154,7 +277,7 @@ sealed class Terminal {
                 var action = head.ToLowerInvariant();
                 if (action != "equip" && action != "use" && action != "fire" && action != "drop") {
                     if (HasEscape(head)) {
-                        System.Console.WriteLine("Arrow sequence not understood. Press Enter after each arrow, or use numpad 1-9.");
+                        System.Console.WriteLine("Arrow sequence not understood. Use numpad 1-9, or type up/down/left/right.");
                         continue;
                     }
                     System.Console.WriteLine($"Unrecognized: {head}. Type ? for controls.");
@@ -189,8 +312,13 @@ sealed class Terminal {
 
     static void Main(string[] args) {
         if (args.Contains("--dev")) { Dev(); return; }
-        System.Console.WriteLine("Deep Delver - recover the Star of the Deep and return to the surface.");
-        var game = Fresh(args);
-        Session(game);
+        EnterRaw();
+        try {
+            System.Console.WriteLine("Deep Delver - recover the Star of the Deep and return to the surface.");
+            var game = Fresh(args);
+            Session(game);
+        } finally {
+            LeaveRaw();
+        }
     }
 }
