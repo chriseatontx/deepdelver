@@ -73,3 +73,20 @@ number of failed checks. Scripted stdin alone cannot reproduce the editor-backed
 failure, so the pty is what makes the contract verifiable from a clone. The raw
 path is POSIX-only (`sh -c` for the `[ -t 0 ]` probe, `stty`, `/dev/tty`) and was
 verified on Linux; with no tty the adapter remains line-oriented.
+
+## Build outputs
+
+`DeepDelver.csproj` sets `<OutputType>Exe</OutputType>`, so each build emits an
+executable form rather than a library: a native launcher named `DeepDelver`
+beside `DeepDelver.dll`, `DeepDelver.runtimeconfig.json` (plus `.deps.json` and
+a `.pdb`) inside `DeepDelver/bin/<config>/net8.0`. The config folder is
+`Debug/net8.0` with a capital D but `release/net8.0` with a lowercase one, which
+MSBuild naming rules cause; `tests/input-check.py` accepts either and drives the
+newest. The launcher is a real ELF binary, yet it loads the sibling `.dll` at
+startup, so it is not a single-image artifact: `DeepDelver` plus
+`DeepDelver.runtimeconfig.json` run from any location once copied together, and
+a launcher whose `.dll` is absent fails with `The application to execute does not
+exist`, which the same gate turns into a clear message. A true single-file
+native build (`--native`, AOT) is not available in the .NET SDK in use, which
+answers `MSB1001: Unknown switch`; releasing that shape needs the newer SDK's
+`dotnet build --native` or `docker build`, not the current toolchain.

@@ -15,13 +15,22 @@ never reproduce it. Checks:
   5. the program hands the terminal settings back when it exits
   6. piped stdin still works, and the --dev fixture is unchanged
 
-Build the game first (dotnet build DeepDelver), then run this:
+Build the game first (`dotnet build DeepDelver`, or `dotnet build DeepDelver -c
+release`; it drives whichever of the two launchers exists and is newest), then run
+this:
 python3 tests/input-check.py     exit code = number of failed checks
 """
 import os, re, select, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "DeepDelver", "bin", "Debug", "net8.0", "DeepDelver")
+# The build emits a native launcher beside its .dll under a config-named folder:
+# Debug goes to bin/Debug/net8.0 while release goes to bin/release/net8.0 (MSBuild
+# lowercases the release config name), so accept whichever exists and prefer the
+# newest build.
+CANDIDATES = [os.path.join(ROOT, "DeepDelver", "bin", cfg, "net8.0", "DeepDelver")
+              for cfg in ("Debug", "release")]
+EXE = max((p for p in CANDIDATES if os.path.exists(p)), key=os.path.getmtime,
+          default=None)
 SCRATCH = tempfile.mkdtemp()
 CFG = os.path.join(SCRATCH, "before.cfg")
 AFTER = os.path.join(SCRATCH, "after.cfg")
@@ -167,9 +176,12 @@ def rd(path):
         return "<missing>"
 
 
-if not os.path.exists(EXE):
-    print(f"missing {EXE}; run `dotnet build DeepDelver` first")
+if EXE is None:
+    print("no launcher built yet; run `dotnet build DeepDelver` or "
+          "`dotnet build DeepDelver -c release` first")
     raise SystemExit(1)
+
+print("driving:", EXE)
 
 checks = []
 

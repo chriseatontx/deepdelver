@@ -57,7 +57,23 @@ and that one rejects some of these invocations, so the system tool is what was
 used here):
 
 - `dotnet build DeepDelver` -> Build succeeded, 0 error(s) (4 pre-existing
-  nullable warnings on `AppDir`'s environment lookups).
+  nullable warnings on `AppDir`'s environment lookups; forcing a rebuild
+  recompiles the symlinked engine too and lists them twice, i.e. 8) and emits
+  `DeepDelver/bin/Debug/net8.0/DeepDelver`.
+- Building for execution works in both configs: `dotnet build DeepDelver -c release`
+  and `dotnet run -c release --project DeepDelver` likewise report 0 error(s) and
+  produce `DeepDelver/bin/release/net8.0/DeepDelver`, whose config folder is named
+  in lowercase because MSBuild names the release output folder `release` while it
+  names the debug one `Debug`. Both artifacts are the same shape: an ELF launcher
+  plus `DeepDelver.dll`, `DeepDelver.runtimeconfig.json`, `DeepDelver.deps.json`
+  and a `.pdb`. The launcher loads its sibling `.dll`, so the shippable unit is the
+  folder, not one file: the launcher, `DeepDelver.dll` and
+  `DeepDelver.runtimeconfig.json` together copied to
+  a scratch directory outside the repository ran the `--dev` fixture there with
+  output and rc 0, and a launcher whose `.dll` was absent failed with
+  `The application to execute does not exist`. `DeepDelver.deps.json` was not
+  required at runtime. Building inside the repository with `-o dist` leaves an
+  untracked `dist/` folder that `.gitignore` does not cover.
 - `dotnet build tests/TestRunner.csproj` -> Build succeeded, 0 warning(s),
   0 error(s).
 - `dotnet run --project tests/TestRunner.csproj` -> `Checks: 332 Failures: 0`,
@@ -207,6 +223,17 @@ also recorded by `tests/input-check.py`):
   checks.
 - MSBuild rejects `dotnet build --project X`; the build target is positional
   (`dotnet build DeepDelver`), while `run` takes `--project`.
+- A single-file native executable is not available with the .NET 8 SDK in use:
+  `dotnet build DeepDelver --native` (with or without `-c release`) is rejected
+  with `MSBUILD : error MSB1001: Unknown switch`, so the shippable unit is the
+  launcher-plus-`.dll` folder under `bin/<config>/net8.0` rather than one binary.
+  Single-image AOT output would need a newer SDK (`dotnet build --native`,
+  `docker build`), and neither this port's tooling nor its documentation has been
+  adapted to that shape, including `tests/input-check.py`, which locates the game
+  by the launcher next to the `.dll` in the `Debug` or `release` tree.
+- `tests/input-check.py` is a python3 script and needs a built game to drive, so
+  build `DeepDelver` (either config) before running it; without a launcher it now
+  says so and exits 1 instead of reporting a failure count.
 - This workspace had no version control when the harness work started; it was
   initialized with `git init -b main` on 2026-10-23 and the sources, tests and
   docs are committed there. The repository's local identity is now
