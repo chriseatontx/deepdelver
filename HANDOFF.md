@@ -59,9 +59,11 @@ Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
 - `dotnet run --project DeepDelver` (piped stdin) -> menu, `?` help, rest,
   pickup, `i`, `s`, `S`/`L` (`Saved.` then `Loaded.`), `q` exit 0.
 - Saves go to `~/.local/DeepDelver/save.json`, outside the repository. The
-  verification and clone runs each wrote one there, so a `save.json` and a
-  `scores.txt` currently exist under `~/.local/DeepDelver`; they are ignored
-  scratch state, and nothing game-related is ever written inside the repository.
+  verification and clone runs each wrote a save there, so `save.json` currently
+  exists in that directory. `scores.txt` does not, because those runs quit with
+  `q`, which ends the session without recording a score; a run that ends in
+  death or victory appends to that file instead. Either way this state stays
+  outside the repository.
 - `git push` -> `origin/main` matches the local `HEAD`, and `tests/Game.cs` is
   stored as a symlink (mode `120000`) so the clone compiles the real engine
   source; a fresh clone of the pushed tree builds and passes the runner.
