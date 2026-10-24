@@ -61,6 +61,9 @@ Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
 - Saves go to `~/.local/DeepDelver/save.json`, outside the repository. That
   file was created only by these verification runs and has been deleted; the
   application-data directory is recreated on the next save.
+- `git push` -> `origin/main` matches the local `HEAD`, and `tests/Game.cs` is
+  stored as a symlink (mode `120000`) so the clone compiles the real engine
+  source; a fresh clone of the pushed tree builds and passes the runner.
 
 Checks cover: construction and surface/monster fields, stair connectivity,
 deterministic floor generation and class identity, movement/refusals/
@@ -131,7 +134,9 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
   docs are committed there. The commit needed an author, so the repository has
   local identity `chris <chris@localhost>` (derived from the account name);
   change it with `git config --local user.name/email` before pushing anywhere
-  that cares about attribution. There is no remote yet, so nothing is pushed.
+  that cares about attribution. The repository is now pushed to
+  `https://github.com/chriseatontx/deepdelver` (`origin`, `main`), so that author
+  string is already published and appears on GitHub as an unlinked `chris`.
 - `.tools/dotnet` is intentionally not tracked: it is 578 MB / 4,704 files of
   vendored SDK-only dotnet tooling, kept repo-local so the build works offline.
   A fresh clone must provide its own .NET 8 SDK and put a launcher at
@@ -151,8 +156,12 @@ live in `/tmp/opencode/inputprobe.py` and `/tmp/opencode/dirprobe.py`):
    (`tests/TestRunner.cs` -> `*Test.cs` files under a `DeepDelver.Tests`
    package project) so the AGENTS.md `dotnet test` instruction is satisfied
    directly; until then the runner is the equivalent gate.
-2. Add a remote and push once a hosting target exists (the repository is local
-   only, `main` branch, one or two commits deep).
+2. Remote work is done: `origin` is `https://github.com/chriseatontx/deepdelver`
+   and `main` (both commits) is pushed and tracked, so `git push` is a no-op
+   until more changes land. The push used the `gh` CLI credential helper; the
+   published author is still `chris <chris@localhost>`, so re-run
+   `git config --local user.name/email` and amend if you want GitHub to link the
+   commits to your account.
 3. Optional engine follow-up, deliberately not done here: stair travel
    (`descend`/`ascend`) returns before the end-of-turn step in `Game.Act`, so
    it costs zero turns and zero hunger, while AGENTS.md says every accepted
