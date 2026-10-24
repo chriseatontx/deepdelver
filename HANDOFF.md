@@ -58,9 +58,10 @@ Commands (the repo ships its own SDK launcher at `.tools/dotnet/dotnet`, SDK
   deterministic map (seed 4242, Warden, depth 0, turn 6).
 - `dotnet run --project DeepDelver` (piped stdin) -> menu, `?` help, rest,
   pickup, `i`, `s`, `S`/`L` (`Saved.` then `Loaded.`), `q` exit 0.
-- Saves go to `~/.local/DeepDelver/save.json`, outside the repository. That
-  file was created only by these verification runs and has been deleted; the
-  application-data directory is recreated on the next save.
+- Saves go to `~/.local/DeepDelver/save.json`, outside the repository. The
+  verification and clone runs each wrote one there, so a `save.json` and a
+  `scores.txt` currently exist under `~/.local/DeepDelver`; they are ignored
+  scratch state, and nothing game-related is ever written inside the repository.
 - `git push` -> `origin/main` matches the local `HEAD`, and `tests/Game.cs` is
   stored as a symlink (mode `120000`) so the clone compiles the real engine
   source; a fresh clone of the pushed tree builds and passes the runner.
