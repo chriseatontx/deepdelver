@@ -196,9 +196,13 @@ a tty:
 a `finally` around the whole run, so the terminal is handed back on every exit
 path, including an exception. `Game.cs` is untouched.
 
-Verified after the second round of fixes (the built executable
-`DeepDelver/bin/Debug/net8.0/DeepDelver` inside a real pty, seed 4242, Warden;
-also recorded by `tests/input-check.py`):
+Verified after the second round of fixes, against the built executable that
+`tests/input-check.py` drives - the newest launcher under `DeepDelver/bin`, which
+was `DeepDelver/bin/Debug/net8.0/DeepDelver` when only the debug tree existed and
+`DeepDelver/bin/release/net8.0/DeepDelver` once the release build was made, so the
+raw-tty input path is known to behave identically in both configs (seed 4242,
+Warden; recorded by `tests/input-check.py`, whose first output line names the
+launcher it used):
 
 - The hero reaches column 39 on turn 14 for numpad digits, for arrow bytes
   followed by Enter, and for arrow bytes with **no Enter at all**; no complaint
